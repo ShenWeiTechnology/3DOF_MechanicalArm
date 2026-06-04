@@ -1,0 +1,80 @@
+#include "stm32f10x.h"
+#include "math.h"
+
+// 机械臂硬件参数（用尺子实际测量后修改）
+#define L1            100.0f    // 大臂长度(mm)
+#define L2            100.0f    // 小臂长度(mm)
+#define BASE_HEIGHT   80.0f     // 底座高度(mm)
+#define ARM_OFFSET    10.0f     // 末端补偿(mm)
+#define PI            3.1415926535f
+
+/**
+ * @brief  三轴机械臂逆运动学解算
+ * @param  x: 目标点X坐标（左右方向，右为正）
+ * @param  y: 目标点Y坐标（前后方向，前为正）
+ * @param  z: 目标点Z坐标（上下方向，上为正）
+ * @param  theta0: 输出底座舵机角度(ID0，单位：度)
+ * @param  theta1: 输出大臂舵机角度(ID1，单位：度)
+ * @param  theta2: 输出小臂舵机角度(ID2，单位：度)
+ * @retval 0:解算成功 1:目标点超出工作空间
+ */
+uint8_t inverse_kinematics(float x, float y, float z, float *theta0, float *theta1, float *theta2)
+{
+    // 1. 计算底座旋转角θ0
+    *theta0 = atan2(x, y) * 180.0f / PI;
+
+    // 2. 计算水平投影长度
+    float r = sqrtf(x*x + y*y) - ARM_OFFSET;
+    if (r < 0) return 1;
+
+    // 3. 计算大臂关节到目标点的直线距离
+    float delta_z = BASE_HEIGHT - z;
+    float hypotenuse = sqrtf(delta_z*delta_z + r*r);
+
+    // 工作空间边界检查
+    if (hypotenuse > L1 + L2 || hypotenuse < fabsf(L1 - L2))
+    {
+        return 1;
+    }
+
+    // 4. 计算大臂角度θ1
+    float cos_theta1_1 = (L1*L1 + hypotenuse*hypotenuse - L2*L2) / (2 * L1 * hypotenuse);
+    if(cos_theta1_1 > 1.0f)  cos_theta1_1 = 1.0f;
+    if(cos_theta1_1 < -1.0f) cos_theta1_1 = -1.0f;
+
+    float theta1_1 = acosf(cos_theta1_1) * 180.0f / PI;
+    float theta1_2 = 0.0f;
+
+    if (fabsf(delta_z) < 0.1f)
+    {
+        theta1_2 = 0.0f;
+    }
+    else if (delta_z > 0)
+    {
+        theta1_2 = (atan2(r, delta_z) * 180.0f / PI) - 90.0f;
+    }
+    else
+    {
+        theta1_2 = atan2(fabsf(delta_z), r) * 180.0f / PI;
+    }
+
+    *theta1 = theta1_1 + theta1_2;
+
+    // 5. 计算小臂角度θ2
+    float cos_theta2 = (L1*L1 + L2*L2 - hypotenuse*hypotenuse) / (2 * L1 * L2);
+    if(cos_theta2 > 1.0f)  cos_theta2 = 1.0f;
+    if(cos_theta2 < -1.0f) cos_theta2 = -1.0f;
+
+    float theta2_raw = acosf(cos_theta2) * 180.0f / PI;
+    *theta2 = theta2_raw + *theta1 - 90.0f;
+
+    // 舵机角度限幅(0~180度)
+    if(*theta0 < 0)   *theta0 = 0;
+    if(*theta0 > 180) *theta0 = 180;
+    if(*theta1 < 0)   *theta1 = 0;
+    if(*theta1 > 180) *theta1 = 180;
+    if(*theta2 < 0)   *theta2 = 0;
+    if(*theta2 > 180) *theta2 = 180;
+
+    return 0;
+}
